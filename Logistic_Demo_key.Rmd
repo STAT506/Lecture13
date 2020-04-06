@@ -1,0 +1,147 @@
+---
+title: "Logistic Regression Demo Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+#### Read Brazilian Beer Data
+
+Recall the beer data contains the liters of beer consumed as a function of precip, maximum temperature, and weekend. Now consider modeling whether the day is a weekend.
+
+```{r messages = F}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(arm)
+library(rbin)
+beer <- read_csv("http://math.montana.edu/ahoegh/Data/Brazil_cerveja.csv")
+beer <- beer %>% mutate(weekend_fact = as.factor(weekend))
+```
+
+
+#### Data Viz
+
+It seems likely that consumption patterns would change depending on whether the day was a weekend. The data viz also suggest this is the case.
+
+```{r}
+consumption_fig <- beer %>% ggplot(aes(y = weekend, x = consumed)) + geom_jitter(height = .1) + geom_smooth(method = "loess") + ggtitle('Weekend vs. Consumption') + theme_bw()
+consumption_violin <- beer %>% ggplot(aes(x = weekend_fact, y = consumed, color = weekend_fact)) + geom_violin() + geom_jitter( alpha = .5) + labs(color = "Weekend (1 = weekend)") + theme_bw() + xlab("Weekend")
+
+grid.arrange(consumption_fig, consumption_violin, nrow = 2, ncol = 1) 
+```
+
+It does not seem plausible that the weather would be different on the weekends. This is seen in the figures for maximum temperature.
+
+```{r}
+temp_fig <- beer %>% ggplot(aes(y = weekend, x = max_tmp)) + geom_jitter(height = .1) + geom_smooth(method = "loess") + ggtitle('Weekend vs. Maximum Temperature') + theme_bw()
+temp_violin <- beer %>% ggplot(aes(x = weekend_fact, y = max_tmp, color = weekend_fact)) + geom_violin() + geom_jitter( alpha = .5) + labs(color = "Weekend (1 = weekend)") + theme_bw() + xlab("Weekend")
+
+grid.arrange(temp_fig, temp_violin, nrow = 2, ncol = 1) 
+```
+
+#### Fitting Model
+
+Consider two models: what is the difference between these?
+```{r}
+glm_beer <- glm(weekend ~ consumed, data = beer)
+display(glm_beer)
+```
+
+__This one treats the response as continuous and is actually just fitting a linear regression model.__
+
+```{r}
+glm_beer2 <- glm(weekend_fact ~consumed, data = beer, family = binomial)
+display(glm_beer2)
+```
+
+__This is logistic regression.__ Before looking at model coefficients, lets take a look at the fitted model.
+
+```{r}
+beer <- beer %>% mutate(weekend_fitted = fitted(glm_beer2))
+
+beer %>% ggplot(aes(y = weekend, x = consumed)) + geom_jitter(height = .1) +  ggtitle('Weekend vs. Consumption') + theme_bw() + geom_line(aes(y = weekend_fitted, x = consumed), col = 'red', lwd = 2) + ylab('Weekend Probability')
+
+```
+
+
+
+### Coefficient interpretations
+
+```{r}
+beer <- beer %>% mutate(scaled_consumed = scale(consumed))
+glm_beer_scaled <- glm(weekend_fact ~scaled_consumed, data = beer, family = binomial)
+beta_mean <- as.numeric(round(exp(coef(glm_beer_scaled)['scaled_consumed'])))
+display(glm_beer_scaled)
+
+```
+
+__Intercept:__ The intercept can be interpreted as the the logit scaled probability of success at the zero value of the other parameters.
+
+In this case, the intercept can be interpreted as the probability of a weekend at the average consumption (`r round(mean(beer$consumed))` liters) is $logit^{-1}$(-1.24) = `r round(invlogit(coef(glm_beer_scaled)["(Intercept)"]),2)`.
+
+__scaled_consumed:__ 
+All three intepretations are provided, but typically choose one.
+
+_log odds:_ there is evidence that the mean log odds for scaled consumption is positive (95% CI: `r round(ci['scaled_consumed',],2)`), suggesting that increased consumption results in a higher probability of the day being a weekend day.
+
+_odds:_ there is evidence that the mean odds for scaled consumption is greater than one (95% CI: `r round(c(exp(ci['scaled_consumed','2.5 %']),exp(ci['scaled_consumed','97.5 %'])),2)`). In particular, with a one SD increase in consumption the odds of a weekend day increases by roughly `r beta_mean`.
+
+_probability:_ With a one sd increase from mean consumption the probability that the day is a weekend day increases from `r round(invlogit(-1.24),2)` to `r round(invlogit(glm_beer_scaled$coefficients[1] + glm_beer_scaled$coefficients[2] ),2)`. Similarly for a one sd decrease from mean consumption, the probability that the day is a weekend day decreases from `r round(invlogit(-1.24),2)` to `r round(invlogit(glm_beer_scaled$coefficients[1] - glm_beer_scaled$coefficients[2] ),2)`.
+
+
+
+### Diagnostics
+
+```{r}
+binnedplot(predict(glm_beer_scaled), resid(glm_beer_scaled))
+```
+
+```{r}
+bins <- rbin_equal_length(beer,weekend, consumed, bins = 10)$bins
+bins <- bins %>% mutate(logit_good = logit(good_rate))
+bins %>% ggplot(aes(y = logit_good, x = cut_point)) + geom_point() + geom_smooth(method = 'loess')
+```
+
+
+```{r}
+beer <- beer %>% mutate(scaled_consumed_log = scale(log(consumed)),
+                        scaled_consumed_sq = scaled_consumed^2,
+                        scaled_consumed_cube = scaled_consumed^3)
+glm_beer_scaled2 <- glm(weekend_fact ~scaled_consumed_log, data = beer, family = binomial)
+display(glm_beer_scaled2)
+```
+
+```{r}
+binnedplot(predict(glm_beer_scaled2), resid(glm_beer_scaled2))
+```
+```{r}
+glm_beer_scaled3 <- glm(weekend_fact ~scaled_consumed + scaled_consumed_sq, data = beer, family = binomial)
+display(glm_beer_scaled3)
+
+binnedplot(predict(glm_beer_scaled3), resid(glm_beer_scaled3))
+```
+
+
+```{r}
+glm_beer_scaled4 <- glm(weekend_fact ~scaled_consumed + scaled_consumed_sq + scaled_consumed_cube, data = beer, family = binomial)
+display(glm_beer_scaled4)
+
+binnedplot(predict(glm_beer_scaled4), resid(glm_beer_scaled4))
+
+```
+
+
+### Prediction
+
+```{r}
+train_ids <- sample(nrow(beer),round(nrow(beer) * .7))
+test_ids <- (1:nrow(beer))[!(1:nrow(beer)) %in% train_ids]
+train_beer <- beer %>% slice(train_ids)
+test_beer <- beer %>% slice(test_ids)
+
+train_glm <- glm(weekend ~ scaled_consumed, family = binomial, data = train_beer)
+ce_error <- mean(round(predict(train_glm, test_beer, type = 'response')) != test_beer$weekend)
+```
+For this model the classification error is `r round(ce_error, 2)`.

@@ -1,0 +1,81 @@
+---
+title: "Logistic Regression Demo Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+#### Read Brazilian Beer Data
+
+Recall the beer data contains the liters of beer consumed as a function of precip, maximum temperature, and weekend. Now consider modeling whether the day is a weekend.
+
+```{r messages = F}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(arm)
+library(rbin)
+beer <- read_csv("http://math.montana.edu/ahoegh/Data/Brazil_cerveja.csv")
+beer <- beer %>% mutate(weekend_fact = as.factor(weekend))
+```
+
+
+#### Data Viz
+
+It seems likely that consumption patterns would change depending on whether the day was a weekend. 
+
+It does not seem plausible that the weather would be different on the weekends. 
+
+#### Fitting Model
+
+Consider two models: what is the difference between these?
+```{r}
+glm_beer <- glm(weekend ~ consumed, data = beer)
+display(glm_beer)
+```
+
+
+
+```{r}
+glm_beer2 <- glm(weekend_fact ~consumed, data = beer, family = binomial)
+display(glm_beer2)
+```
+
+
+### Coefficient interpretations
+
+```{r}
+beer <- beer %>% mutate(scaled_consumed = scale(consumed))
+glm_beer_scaled <- glm(weekend_fact ~scaled_consumed, data = beer, family = binomial)
+beta_mean <- as.numeric(round(exp(coef(glm_beer_scaled)['scaled_consumed'])))
+display(glm_beer_scaled)
+
+```
+
+__Intercept:__ The intercept can be interpreted as the the logit scaled probability of success at the zero value of the other parameters.
+
+
+__scaled_consumed:__ 
+All three intepretations are provided, but typically choose one.
+
+_log odds:_ there is evidence that the mean log odds for scaled consumption is positive
+
+_odds:_ there is evidence that the mean odds for scaled consumption is greater than one 
+
+_probability:_ With a one sd increase from mean consumption the probability that the day is a weekend day increases 
+
+
+
+### Diagnostics
+
+### Prediction
+
+```{r}
+train_ids <- sample(nrow(beer),round(nrow(beer) * .7))
+test_ids <- (1:nrow(beer))[!(1:nrow(beer)) %in% train_ids]
+train_beer <- beer %>% slice(train_ids)
+test_beer <- beer %>% slice(test_ids)
+
+train_glm <- glm(weekend ~ scaled_consumed, family = binomial, data = train_beer)
+```
